@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +44,23 @@ def _get_plotlyjs_script_tag() -> str:
     if m2:
         return m2.group(0)
     return f'<script src="https://cdn.plot.ly/plotly-{plotly.__version__}.min.js"></script>'
+
+
+def _get_repo_url() -> str:
+    """Return the HTTPS URL of the origin remote derived from git, or a placeholder."""
+    try:
+        raw = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            stderr=subprocess.DEVNULL,
+            cwd=Path(__file__).parent,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "github.com/[your-handle]/isys573-sales-dashboard"
+    # git@github.com:user/repo.git  →  https://github.com/user/repo
+    raw = re.sub(r"^git@([^:]+):", r"https://\1/", raw)
+    # strip trailing .git
+    return re.sub(r"\.git$", "", raw)
 
 
 def load_data(path: Path = DATA_PATH) -> pd.DataFrame:
@@ -223,6 +241,7 @@ def build_html(df: pd.DataFrame) -> str:
     import json
     chart_json = json.dumps(chart_data)
     plotlyjs_script = _get_plotlyjs_script_tag()
+    repo_url = _get_repo_url()
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -289,7 +308,8 @@ def build_html(df: pd.DataFrame) -> str:
 <footer>
   Built with Python · Pandas · Plotly &nbsp;|&nbsp;
   ISYS 573 AugOps Demo &nbsp;|&nbsp;
-  github.com/[your-handle]/isys573-sales-dashboard
+  <a href="{repo_url}" target="_blank"
+     style="color:#999;text-decoration:none;">{repo_url}</a>
 </footer>
 
 <script>
