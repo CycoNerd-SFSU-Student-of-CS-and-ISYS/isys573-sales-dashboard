@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import plotly; print\\(plotly.__version__\\)\")",
+      "Bash(python -c \"import plotly.io._html as h; import inspect; sig = inspect.signature\\(h.to_html\\); print\\(sig\\)\")",
+      "Bash(python -c \"import plotly.io as pio, plotly.graph_objects as go, re; h = pio.to_html\\(go.Figure\\(\\), include_plotlyjs='cdn', full_html=False\\); m = re.search\\(r'<script\\\\b[^>]*src=\\\\\"[^\\\\\"]+\\\\\"[^>]*></script>', h\\); print\\(m.group\\(0\\) if m else 'NO MATCH'\\); print\\('---'\\); print\\(h[:300]\\)\")",
+      "Bash(python dashboard.py)",
+      "Bash(python -c \"import re; content = open\\('dashboard.html', encoding='utf-8'\\).read\\(\\); print\\('File size:', len\\(content\\), 'chars'\\); has_dtype = '\\\\\"dtype\\\\\"' in content; has_bdata = '\\\\\"bdata\\\\\"' in content; has_old_cdn = 'plotly-2.27.0' in content; m = re.search\\(r'cdn\\\\.plot\\\\.ly/plotly-[\\\\d.]+', content\\); print\\('dtype present:', has_dtype\\); print\\('bdata present:', has_bdata\\); print\\('old CDN present:', has_old_cdn\\); print\\('CDN found:', m.group\\(0\\) if m else 'NONE'\\)\")",
+      "Bash(python -m pytest tests/ -v)"
+    ]
+  }
+}
