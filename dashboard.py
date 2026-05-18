@@ -15,16 +15,52 @@ Usage:
 """
 
 import argparse
+import re
+import subprocess
 import sys
 from pathlib import Path
 
-import pandas as pd
+import plotly
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 from plotly.subplots import make_subplots
+import pandas as pd
 
 
 DATA_PATH = Path(__file__).parent / "data" / "sales.csv"
+
+
+def _get_plotlyjs_script_tag() -> str:
+    """Return a Plotly.js <script> tag whose version matches the installed Plotly.py."""
+    # include_plotlyjs="cdn" is valid at runtime; Plotly 6 type stubs are incorrect.
+    cdn_html = pio.to_html(go.Figure(), include_plotlyjs="cdn", full_html=False)  # type: ignore[arg-type]
+    m = re.search(r'<script\b[^>]*src="https://cdn\.plot\.ly[^"]*"[^>]*></script>', cdn_html)
+    if m:
+        return m.group(0)
+    # Fallback: embed the full bundle so the HTML is always self-contained.
+    embed_html = pio.to_html(go.Figure(), include_plotlyjs=True, full_html=False)
+    m2 = re.search(r'(<script\b[^>]*>)([\s\S]+?)(</script>)', embed_html)
+    if m2:
+        return m2.group(0)
+    return f'<script src="https://cdn.plot.ly/plotly-{plotly.__version__}.min.js"></script>'
+
+
+def _get_repo_url() -> str:
+    """Return the HTTPS URL of the origin remote derived from git, or a placeholder."""
+    try:
+        raw = subprocess.check_output(
+            ["git", "remote", "get-url", "origin"],
+            stderr=subprocess.DEVNULL,
+            cwd=Path(__file__).parent,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "github.com/[your-handle]/isys573-sales-dashboard"
+    # git@github.com:user/repo.git  →  https://github.com/user/repo
+    raw = re.sub(r"^git@([^:]+):", r"https://\1/", raw)
+    # strip trailing .git
+    return re.sub(r"\.git$", "", raw)
 
 
 def load_data(path: Path = DATA_PATH) -> pd.DataFrame:
@@ -54,8 +90,8 @@ def build_region_bar(df: pd.DataFrame) -> go.Figure:
     )
     colors = ["#9B59B6", "#02C39A", "#F4A261", "#00B4D8"]
     fig = go.Figure(go.Bar(
-        x=summary["revenue"],
-        y=summary["region"],
+        x=summary["revenue"].astype(float).tolist(),
+        y=summary["region"].astype(str).tolist(),
         orientation="h",
         marker_color=colors[:len(summary)],
         hovertemplate="<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>",
@@ -79,19 +115,22 @@ def build_monthly_line(df: pd.DataFrame) -> go.Figure:
         .reset_index()
         .sort_values("month")
     )
-    fig = px.line(
-        monthly, x="month", y="revenue",
-        markers=True,
-        labels={"revenue": "Revenue ($)", "month": "Month"},
-        title="Monthly Revenue Trend",
-        color_discrete_sequence=["#2196F3"],
-    )
-    fig.update_layout(plot_bgcolor="white",
-                      yaxis=dict(tickprefix="$", tickformat=",.0f"),
-                      margin=dict(t=50, b=30))
-    fig.update_traces(
+    x_vals = monthly["month"].astype(str).tolist()
+    y_vals = monthly["revenue"].astype(float).tolist()
+    fig = go.Figure(go.Scatter(
+        x=x_vals,
+        y=y_vals,
+        mode="lines+markers",
+        line=dict(color="#2196F3", width=2.5),
+        marker=dict(color="#2196F3"),
         hovertemplate="<b>%{x}</b><br>Revenue: $%{y:,.0f}<extra></extra>",
-        line=dict(width=2.5)
+    ))
+    fig.update_layout(
+        title="Monthly Revenue Trend",
+        plot_bgcolor="white",
+        xaxis=dict(title="Month"),
+        yaxis=dict(tickprefix="$", tickformat=",.0f", title="Revenue ($)"),
+        margin=dict(t=50, b=30),
     )
     return fig
 
@@ -99,17 +138,16 @@ def build_monthly_line(df: pd.DataFrame) -> go.Figure:
 def build_category_pie(df: pd.DataFrame) -> go.Figure:
     """Revenue by product category — pie chart."""
     cat = df.groupby("category")["revenue"].sum().reset_index()
-    fig = px.pie(
-        cat, names="category", values="revenue",
-        color_discrete_sequence=px.colors.qualitative.Pastel,
-        title="Revenue by Category",
+    fig = go.Figure(go.Pie(
+        labels=cat["category"].astype(str).tolist(),
+        values=cat["revenue"].astype(float).tolist(),
         hole=0.35,
-    )
-    fig.update_traces(
-        textposition="inside", textinfo="percent+label",
-        hovertemplate="<b>%{label}</b><br>Revenue: $%{value:,.0f}<br>Share: %{percent}<extra></extra>"
-    )
-    fig.update_layout(margin=dict(t=50, b=10))
+        textposition="inside",
+        textinfo="percent+label",
+        marker=dict(colors=px.colors.qualitative.Pastel),
+        hovertemplate="<b>%{label}</b><br>Revenue: $%{value:,.0f}<br>Share: %{percent}<extra></extra>",
+    ))
+    fig.update_layout(title="Revenue by Category", margin=dict(t=50, b=10))
     return fig
 
 
@@ -122,22 +160,21 @@ def build_top_products(df: pd.DataFrame, n: int = 10) -> go.Figure:
         .reset_index()
         .sort_values("revenue")
     )
-    fig = px.bar(
-        top, x="revenue", y="product",
+    x_vals = top["revenue"].astype(float).tolist()
+    y_vals = top["product"].astype(str).tolist()
+    fig = go.Figure(go.Bar(
+        x=x_vals,
+        y=y_vals,
         orientation="h",
-        color="revenue",
-        color_continuous_scale="Blues",
-        labels={"revenue": "Revenue ($)", "product": "Product"},
-        title=f"Top {n} Products by Revenue",
-    )
+        marker=dict(color=x_vals, colorscale="Blues", showscale=False),
+        hovertemplate="<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>",
+    ))
     fig.update_layout(
-        coloraxis_showscale=False,
+        title=f"Top {n} Products by Revenue",
         plot_bgcolor="white",
-        xaxis=dict(tickprefix="$", tickformat=",.0f"),
-        margin=dict(t=50, b=30)
-    )
-    fig.update_traces(
-        hovertemplate="<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>"
+        xaxis=dict(tickprefix="$", tickformat=",.0f", title="Revenue ($)"),
+        yaxis=dict(title="Product"),
+        margin=dict(t=50, b=30),
     )
     return fig
 
@@ -203,6 +240,8 @@ def build_html(df: pd.DataFrame) -> str:
     # Serialize all chart data to embed in HTML
     import json
     chart_json = json.dumps(chart_data)
+    plotlyjs_script = _get_plotlyjs_script_tag()
+    repo_url = _get_repo_url()
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -210,7 +249,7 @@ def build_html(df: pd.DataFrame) -> str:
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>ISYS 573 · Retail Sales Dashboard</title>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  {plotlyjs_script}
   <style>
     *{{box-sizing:border-box;margin:0;padding:0;}}
     body{{font-family:'Segoe UI',Arial,sans-serif;background:#f4f6f9;color:#1a1a2e;}}
@@ -269,7 +308,8 @@ def build_html(df: pd.DataFrame) -> str:
 <footer>
   Built with Python · Pandas · Plotly &nbsp;|&nbsp;
   ISYS 573 AugOps Demo &nbsp;|&nbsp;
-  github.com/[your-handle]/isys573-sales-dashboard
+  <a href="{repo_url}" target="_blank"
+     style="color:#999;text-decoration:none;">{repo_url}</a>
 </footer>
 
 <script>
@@ -312,23 +352,27 @@ applyFilter("Full Year");
 
 
 def main() -> None:
+    # Ensure UTF-8 output on Windows consoles that default to cp1252.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+
     parser = argparse.ArgumentParser(description="Generate ISYS 573 Sales Dashboard")
     parser.add_argument("--data",   default=str(DATA_PATH), help="Path to sales CSV")
     parser.add_argument("--output", default="dashboard.html", help="Output HTML file")
     args = parser.parse_args()
 
-    print(f"Loading data from {args.data} …")
+    print(f"Loading data from {args.data} ...")
     df = load_data(Path(args.data))
-    print(f"  {len(df)} rows · {df['region'].nunique()} regions · "
+    print(f"  {len(df)} rows / {df['region'].nunique()} regions / "
           f"{df['category'].nunique()} categories")
 
-    print("Building dashboard …")
+    print("Building dashboard ...")
     html = build_html(df)
 
     out = Path(args.output)
     out.write_text(html, encoding="utf-8")
-    print(f"✅  Dashboard saved → {out.resolve()}")
-    print(f"   Open in browser: file://{out.resolve()}")
+    print(f"OK  Dashboard saved -> {out.resolve()}")
+    print(f"    Open in browser: file://{out.resolve()}")
 
 
 if __name__ == "__main__":
